@@ -9,8 +9,8 @@
         :infinite-scroll-delay="100"
     >
       <el-row :gutter="gutter" justify="start">
-        <el-backtop :bottom="100" :right="100" :visibility-height="1" target=".product-display" style="position: fixed">
-          <div class="a"><el-icon :size="30" style="color:green;"><ArrowUpBold /></el-icon></div>
+        <el-backtop class="shop-backtop" :bottom="100" :right="100" :visibility-height="1" target=".product-display">
+          <div class="a"><el-icon :size="22" style="color:#2f9e44;"><ArrowUpBold /></el-icon></div>
         </el-backtop>
         <el-col :xs="24" :sm="12" :md="8" :lg="6" v-for="(product, index) in visibleProducts" :key="index">
           <el-card class="product-card" shadow="hover">
@@ -308,17 +308,31 @@ const loadMore = () => {
 
 <style scoped>
 .a {
-  width: 70px;
-  height: 70px;
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
+  min-height: 56px;
+  padding: 0;
   border-radius: 50%;
-  background-color: white;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(244, 247, 250, 0.98));
   display: flex;
   justify-content: center;
   align-items: center;
-  box-shadow: 0 5px 10px rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(5px);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(5px);
-  opacity: 0.8;
+  opacity: 0.96;
+}
+
+:deep(.shop-backtop) {
+  width: 56px;
+  height: 56px;
+}
+
+:deep(.shop-backtop.el-backtop) {
+  background: transparent;
+  box-shadow: none;
 }
 
 .product-display {
