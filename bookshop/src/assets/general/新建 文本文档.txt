@@ -1,0 +1,215 @@
+<template>
+  <div class="product-display" @change="">
+    <div class="products-container">
+      <div v-for="(product, index) in products" :key="product.id" class="product-item">
+        <el-card v-if="!product.loaded" class="cardclass" shadow="hover">
+          <template #header>
+            <el-skeleton-item variant="text" style="width: 30%;"/>
+          </template>
+          <div class="skeleton-content">
+            <div class="skeleton-image">
+              <el-skeleton-item variant="image" style="width: 100%; height: 100%;"/>
+            </div>
+            <div class="skeleton-right">
+              <div class="skeleton-info">
+                <el-skeleton-item variant="text" style="width: 100%;"/>
+                <el-skeleton-item variant="text" style="width: 80%; margin-top: 10px"/>
+              </div>
+              <div class="skeleton-buttons">
+                <el-skeleton-item variant="button" style="width: 80px;"/>
+                <el-skeleton-item variant="button" style="width: 80px;"/>
+              </div>
+            </div>
+          </div>
+        </el-card>
+        <el-card v-else class="cardclass" shadow="hover">
+          <template #header>
+            <span v-if="category==='payment'">{{product.name}}——剩余时间{{product.time}}</span>
+            <span v-else>{{product.name}}</span>
+          </template>
+          <div class="card-content">
+            <div class="product-image">
+              <img :src="product.imageUrl"
+                   @load="onImageLoad($event, product)"
+                   @error="onImageError(product)"/>
+            </div>
+            <div class="product-right">
+              <div class="product-info">卖家：牛魔———价格：{{product.price}}元</div>
+              <div class="price-button-container">
+                <el-button v-if="category==='payment'" type="warning" plain>付款</el-button>
+                <el-button v-else-if="category==='delivering'" type="warning" plain>退款</el-button>
+                <el-button v-else type="warning" plain>退货</el-button>
+                <el-button type="danger" plain>取消</el-button>
+              </div>
+            </div>
+          </div>
+        </el-card>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script lang="ts" setup>
+import { ref, onMounted, defineEmits, defineProps, watch, reactive } from 'vue';
+import { useCounterStore } from '@/stores/counter';  // 引入 Pinia store
+import type { CheckboxValueType } from 'element-plus'
+
+const emit = defineEmits(['product-change']);
+const props = defineProps({
+  category: String,
+});
+
+// 获取 Pinia store
+const productsStore = useCounterStore();
+
+const products = reactive([])
+
+onMounted(() => {
+  if(props.category=="payment"){
+    products.value = productsStore.payproducts;
+  }else if(props.category==="delivering"){
+    products.value = productsStore.deliveringproducts;
+  }else{
+    products.value = productsStore.deliveredproducts;
+  }
+});
+
+// 图片加载成功处理函数
+const onImageLoad = (event, product) => {
+  const img = event.target;
+  if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+    console.log(`图片 ${product.imageUrl} 加载清晰`);
+    product.loaded = true;
+  } else {
+    console.log(`图片 ${product.imageUrl} 可能未完全加载`);
+  }
+  console.log("加载出来");
+};
+
+// 图片加载失败处理函数
+const onImageError = (product) => {
+  console.error(`图片加载失败: ${product.imageUrl}`);
+  product.imageUrl = 'https://via.placeholder.com/200x200';
+  product.loaded = true;
+};
+
+onMounted(() => {
+  products.forEach((product) => {
+    const img = new Image();
+    img.src = product.imageUrl;
+    console.log("挂载"+product.imageUrl);
+
+    // 检查图片是否已经加载完成
+    if (img.complete) {
+      onImageLoad({ target: img }, product);
+    } else {
+      // 图片未加载完成，绑定 onload 和 onerror 事件
+      img.onload = () => {
+        onImageLoad({ target: img }, product);
+      };
+      img.onerror = () => {
+        onImageError(product);
+      };
+    }
+  });
+});
+</script>
+
+<style scoped>
+.product-display {
+  max-height: 800px;
+  width: 100%;
+  overflow-y: auto;
+  position: relative;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.product-display::-webkit-scrollbar {
+  display: none;
+}
+
+.products-container {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 20px;
+}
+
+.product-item {
+  width: calc(50% - 20px);
+  margin-bottom: 20px;
+}
+
+.cardclass {
+  width: 100%;
+  height: 300px;
+}
+
+/* 骨架屏和实际内容共用的布局样式 */
+.skeleton-content,
+.card-content {
+  display: flex;
+  height: calc(100% - 40px);
+  padding: 20px;
+  gap: 20px;
+}
+
+/* 骨架屏样式 */
+.skeleton-image {
+  width: 160px;
+  height: 160px;
+  flex-shrink: 0;
+}
+
+.skeleton-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.skeleton-info {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.skeleton-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: auto;
+}
+
+/* 实际内容样式 */
+.product-image {
+  width: 160px;
+  height: 160px;
+  flex-shrink: 0;
+}
+
+.product-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.product-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.product-info {
+  margin-bottom: 15px;
+}
+
+.price-button-container {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: auto;
+}
+</style>
