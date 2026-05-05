@@ -7,13 +7,16 @@
 
 # 标准库类型工具：用于类型标注与类型转换。
 import asyncio
+import io
 import json
 import os
 import subprocess
+from contextlib import redirect_stderr, redirect_stdout
 from functools import lru_cache
-from typing import Any, Callable, List, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, cast
 
 import aiohttp
+# aiohttp 仅用于搜索时的会话打补丁，FormData 不再需要
 
 # Tavily 搜索工具（LangChain 集成）。
 from langchain_tavily import TavilySearch
@@ -30,29 +33,81 @@ from sqlalchemy import Float, Integer, String, case, create_engine, desc, or_, s
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 
-class Base(DeclarativeBase):
-    """SQLAlchemy ORM 基类。"""
+# class Base(DeclarativeBase):
+#     """SQLAlchemy ORM 基类。"""
 
 
-class Book(Base):
-    """图书信息表模型。"""
+# class Book(Base):
+#     """映射 tryflask 中的 `books` 表结构。"""
 
-    __tablename__ = "books"
+#     __tablename__ = "books"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    author: Mapped[Optional[str]] = mapped_column(String(255))
-    price: Mapped[Optional[float]] = mapped_column(Float)
-    description: Mapped[Optional[str]] = mapped_column(String(2000))
-    seller: Mapped[Optional[str]] = mapped_column(String(255))
-    stock: Mapped[Optional[int]] = mapped_column(Integer)
+#     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+#     title: Mapped[str] = mapped_column(String(200), nullable=False)
+#     author: Mapped[Optional[str]] = mapped_column(String(100))
+#     publisher: Mapped[Optional[str]] = mapped_column(String(100))
+#     description: Mapped[Optional[str]] = mapped_column(String(2000))
+#     price: Mapped[Optional[float]] = mapped_column(Float)
+#     stock: Mapped[Optional[int]] = mapped_column(Integer)
+#     seller_id: Mapped[Optional[int]] = mapped_column(Integer)
+#     picture_url: Mapped[Optional[str]] = mapped_column(String(500))
+
+
+# 优先尝试直接使用 tryflask 中定义的模型（在 Flask app 上下文中查询），
+# 如果导入或初始化失败则回退到本模块自己的 DB engine 查询。
+TRYFLASK_MODELS_AVAILABLE = False
+TF_db = None
+TFBook = None
+TFUser = None
+TF_IMPORT_ERROR = None
+try:
+    import sys
+
+    _root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+    _tryflask_root = os.path.join(_root, 'tryflask')
+    for _path in (_root, _tryflask_root):
+        if _path not in sys.path:
+            sys.path.insert(0, _path)
+
+    import importlib
+
+    # 优先使用 tryflask 目录下的 app 包，避免命中 site-packages 的 app
+    _app_mod = sys.modules.get("app")
+    if _app_mod is not None:
+        _app_file = getattr(_app_mod, "__file__", "") or ""
+        if _app_file and _tryflask_root not in os.path.abspath(_app_file):
+            del sys.modules["app"]
+
+    # 避免混用 app / tryflask.app 导致模型重复定义
+    for _mod_name in list(sys.modules.keys()):
+        if _mod_name.startswith("tryflask.app"):
+            del sys.modules[_mod_name]
+
+    _app_module = importlib.import_module("app")
+    create_app = getattr(_app_module, "create_app")
+    TF_db = importlib.import_module("app.plugins").db
+    _models = importlib.import_module("app.models")
+    TFBook = getattr(_models, "Book")
+    TFUser = getattr(_models, "User")
+    
+
+    # 初始化 Flask app 并推入上下文，确保 TF_db 可用
+    _app = create_app()
+    _app.app_context().push()
+    TRYFLASK_MODELS_AVAILABLE = True
+except Exception as exc:
+    TRYFLASK_MODELS_AVAILABLE = False
+    TF_IMPORT_ERROR = f"tryflask import or init failed: {exc}"
 
 
 @lru_cache(maxsize=1)
 def _get_engine():
     """创建并缓存数据库连接引擎。"""
     load_dotenv(override=False)
-    database_url = os.getenv("BOOKS_DB_URL", "sqlite:///./books.db")
+    database_url = os.getenv(
+        "TRYFLASK_DB_URL",
+        os.getenv("BOOKS_DB_URL", "mysql+pymysql://root2:123456@localhost/secondhand_books"),
+    )
     engine = create_engine(database_url, pool_pre_ping=True)
     Base.metadata.create_all(engine)
     return engine
@@ -65,6 +120,9 @@ def _get_keyword_model():
     runtime = get_runtime(Context)
     model_name = os.getenv("BOOK_SEARCH_MODEL", runtime.context.model)
     return load_chat_model(model_name)
+
+
+# （不再包含通用 HTTP 后端代理：目前仅通过数据库与 tryflask 联动）
 
 
 async def _extract_query_fields(query: str) -> dict[str, Any]:
@@ -197,70 +255,87 @@ async def book_search(query: str) -> Optional[dict[str, Any]]:
     if not query.strip():
         return {"query": query, "results": []}
 
-    fields = await _extract_query_fields(query)
+    # 关闭结构化抽取过程的多余输出（仅保留本函数的主提示行）
+    _silent_buf = io.StringIO()
+    with redirect_stdout(_silent_buf), redirect_stderr(_silent_buf):
+        fields = await _extract_query_fields(query)
     keywords = [kw for kw in fields.get("keywords", []) if isinstance(kw, str) and kw]
     author = fields.get("author") if isinstance(fields.get("author"), str) else None
-    seller = fields.get("seller") if isinstance(fields.get("seller"), str) else None
     min_price = fields.get("min_price") if isinstance(fields.get("min_price"), (int, float)) else None
     max_price = fields.get("max_price") if isinstance(fields.get("max_price"), (int, float)) else None
+    seller = fields.get("seller") if isinstance(fields.get("seller"), str) else None
+    stock = fields.get("stock") if isinstance(fields.get("stock"), int) else None
 
-    engine = _get_engine()
-
-    def _query_books() -> list[dict[str, Any]]:
-        with Session(engine) as session:
+    # 若可用，优先使用 tryflask 的 Flask-SQLAlchemy 模型（在 app 上下文中）
+    if TRYFLASK_MODELS_AVAILABLE and TFBook is not None and TFUser is not None and TF_db is not None:
+        def _query_books_models() -> list[dict[str, Any]]:
+            session = TF_db.session
             conditions = []
             score_expr = None
             if keywords:
                 score_terms = []
                 for kw in keywords:
                     per_kw_score = (
-                        case((Book.title.ilike(f"%{kw}%"), 1), else_=0)
-                        + case((Book.author.ilike(f"%{kw}%"), 1), else_=0)
-                        + case((Book.description.ilike(f"%{kw}%"), 1), else_=0)
-                        + case((Book.seller.ilike(f"%{kw}%"), 1), else_=0)
+                        case((TFBook.title.ilike(f"%{kw}%"), 1), else_=0)
+                        + case((TFBook.author.ilike(f"%{kw}%"), 1), else_=0)
+                        + case((TFBook.description.ilike(f"%{kw}%"), 1), else_=0)
                     )
                     score_terms.append(per_kw_score)
                     conditions.append(
                         or_(
-                            Book.title.ilike(f"%{kw}%"),
-                            Book.author.ilike(f"%{kw}%"),
-                            Book.description.ilike(f"%{kw}%"),
-                            Book.seller.ilike(f"%{kw}%"),
+                            TFBook.title.ilike(f"%{kw}%"),
+                            TFBook.author.ilike(f"%{kw}%"),
+                            TFBook.description.ilike(f"%{kw}%"),
                         )
                     )
                 if score_terms:
                     score_expr = sum(score_terms) / len(score_terms)
             if author:
-                conditions.append(Book.author.ilike(f"%{author}%"))
-            if seller:
-                conditions.append(Book.seller.ilike(f"%{seller}%"))
+                conditions.append(TFBook.author.ilike(f"%{author}%"))
             if min_price is not None:
-                conditions.append(Book.price >= float(min_price))
+                conditions.append(TFBook.price >= float(min_price))
             if max_price is not None:
-                conditions.append(Book.price <= float(max_price))
+                conditions.append(TFBook.price <= float(max_price))
+            if seller:
+                conditions.append(TFUser.username.ilike(f"%{seller}%"))
+            if stock is not None:
+                conditions.append(TFBook.stock >= stock)
 
             if not conditions:
                 return []
 
-            stmt = select(Book).where(or_(*conditions))
+            # 联表查询 seller（User），通过 TFBook.seller_id == TFUser.id
+            query_stmt = session.query(TFBook, TFUser).outerjoin(TFUser, TFBook.seller_id == TFUser.id).filter(or_(*conditions))
             if score_expr is not None:
-                stmt = stmt.order_by(desc(score_expr))
-            stmt = stmt.limit(10)
-            rows = session.execute(stmt).scalars().all()
-            return [
-                {
-                    "title": row.title,
-                    "author": row.author,
-                    "price": row.price,
-                    "description": row.description,
-                    "seller": row.seller,
-                    "stock": row.stock,
-                }
-                for row in rows
-            ]
+                query_stmt = query_stmt.order_by(desc(score_expr))
+            rows = query_stmt.limit(10).all()
+            results = []
+            for book, user in rows:
+                results.append({
+                    "title": book.title,
+                    "author": book.author,
+                    "price": book.price,
+                    "description": book.description,
+                    "seller_id": book.seller_id,
+                    "seller_username": getattr(user, 'username', None) if user is not None else None,
+                    "seller_nickname": getattr(user, 'nickname', None) if user is not None else None,
+                    "seller_avatar": getattr(user, 'avatar_url', None) if user is not None else None,
+                    "publisher": getattr(book, 'publisher', None),
+                    "picture_url": getattr(book, 'picture_url', None),
+                    "stock": book.stock,
+                })
+            return results
 
-    results = await asyncio.to_thread(_query_books)
-    return {"query": query, "results": results}
+        results = await asyncio.to_thread(_query_books_models)
+        return {"query": query, "results": results}
+
+    # 强制仅使用 tryflask ORM，不再回退到本地 engine。
+    return {
+        "query": query,
+        "results": [],
+        "error": "tryflask ORM 不可用，请确认 PYTHONPATH 与数据库配置",
+    }
+
 
 # 将工具注册到列表中，供图绑定与工具节点调用。
 TOOLS: List[Callable[..., Any]] = [search, open_software, book_search]

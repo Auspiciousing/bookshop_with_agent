@@ -1,9 +1,17 @@
 import asyncio
+import os
 import sys
 
 from dotenv import load_dotenv
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+
+_root = os.path.dirname(os.path.abspath(__file__))
+_src_path = os.path.join(_root, "src")
+_workspace_root = os.path.dirname(_root)
+for _path in (_src_path, _workspace_root):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 from react_agent import graph
 from react_agent.context import Context
@@ -59,10 +67,10 @@ async def main() -> None:
                 version="v1",
             ):
                 # 只输出工具调用与模型回答。
-                if event.get("event") == "on_tool_start":
-                    tool_name = event.get("name") or "unknown_tool"
-                    tool_input = event.get("data", {}).get("input")
-                    _print_tool_event(tool_name, tool_input, "ToolStart")
+                # if event.get("event") == "on_tool_start":
+                #     tool_name = event.get("name") or "unknown_tool"
+                #     tool_input = event.get("data", {}).get("input")
+                #     _print_tool_event(tool_name, tool_input, "ToolStart")
 
                 # 只处理模型的 token 流事件。
                 if event.get("event") == "on_chat_model_stream":
