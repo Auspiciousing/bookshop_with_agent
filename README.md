@@ -1,0 +1,2 @@
+# bookshop_with_agent
+这是个校园二手书交易平台，使用vue3+flask，后续还会增加langchain架构的智能推荐agent。
