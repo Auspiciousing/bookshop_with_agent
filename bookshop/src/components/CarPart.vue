@@ -18,10 +18,6 @@
             <br>&nbsp;
             <div style="display: flex;flex-direction: column;">
               <el-skeleton-item variant="image" style="width: 200px; height: 200px;"/>
-              <img :src="product.picture_url"
-                   @load="onImageLoad($event, product)"
-                   @error="onImageError(product)"
-                   alt="" style="display: none"/>
               <el-skeleton-item variant="text" style="width: 40%;margin-top: 20px"/>
             </div>
           </template>
@@ -31,11 +27,16 @@
         <template #header><strong>{{product.title}}</strong></template>
         <div class="card-content">
           <div style="width: 200px;">
-            <img :src="product.picture_url"
-                 @load="onImageLoad($event, product)"
-                 @error="onImageError(product)"
-                 style="width: 100%; height: 100%; "/>
-          </div>
+              <div v-if="hasPicture(product)" style="width:100%; height:100%;">
+                <img :src="product.picture_url"
+                     @load="onImageLoad($event, product)"
+                     @error="onImageError(product)"
+                     style="width: 100%; height: 100%; object-fit: cover;"/>
+              </div>
+              <div v-else class="detail-image-placeholder" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; background: linear-gradient(135deg, #e9ecef, #f7f9fa);">
+                <span style="color:#8c8c8c">暂无图片</span>
+              </div>
+            </div>
 
           <div style="width: 400px">
             <p>卖家：{{product.seller_username}}———价格：{{product.price}}元</p>
@@ -106,6 +107,24 @@ import type { CheckboxValueType } from 'element-plus';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Plus, Minus } from '@element-plus/icons-vue';
 import api from '@/api/index.js';
+
+const normalizeBooks = (items = []) => {
+  return items.map((item, index) => {
+    const pictureUrl = typeof item.picture_url === 'string' ? item.picture_url.trim() : '';
+    const hasImage = pictureUrl.length > 0;
+
+    return {
+      ...item,
+      picture_url: pictureUrl || 'https://via.placeholder.com/200x200',
+      loaded: !hasImage, // if no image, mark loaded so skeleton doesn't show
+      usePlaceholder: !hasImage,
+      amount: item.amount || 1,
+      checked: !!item.checked,
+      valid: typeof item.valid === 'boolean' ? item.valid : true,
+      imageKey: `${Date.now()}-${index}`,
+    };
+  });
+};
 
 // 处理数量输入框变化
 const handleQuantityChange = (product) => {
@@ -264,6 +283,11 @@ const updateCartQuantity = (product) => {
       });
 };
 
+const hasPicture = (product) => {
+  // If usePlaceholder is true, treat as no picture
+  return !!product && !product.usePlaceholder && typeof product.picture_url === 'string' && product.picture_url.trim().length > 0;
+};
+
 const Delete = (product) => {
   console.log("123456",product.item_id)
   const id_list = reactive([product.item_id])
@@ -307,12 +331,14 @@ const orderNew = (product) => {
 const onImageLoad = (event, product) => {
   console.log(product.id, "图片加载中");
   product.loaded = true;
+  product.usePlaceholder = false;
 };
 
 // 图片加载失败处理函数
 const onImageError = (product) => {
   console.error(`图片加载失败: ${product.picture_url}`);
   product.picture_url = 'https://via.placeholder.com/200x200';
+  product.usePlaceholder = true;
   product.loaded = true;
 };
 
@@ -321,7 +347,7 @@ const onImageError = (product) => {
 onMounted(() => {
   api.getBookCar().then(res => {
     if (res.data.code === 200) {
-      books.value = res.data.data;
+      books.value = normalizeBooks(res.data.data);
       console.log("books:",books.value)
       ElMessage.success('获取商品列表成功');
     }else {
